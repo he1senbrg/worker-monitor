@@ -75,7 +75,7 @@ void setup() {
 
   // ========== INITIALIZE BMP280 ==========
   Serial.print("BMP280 (Pressure)........ ");
-  if (!bmp.begin()) {
+  if (!bmp.begin(BMP280_ADDRESS_ALT)) {
     Serial.println("FAILED");
     Serial.println("ERROR: Could not find BMP280 sensor!");
   }
