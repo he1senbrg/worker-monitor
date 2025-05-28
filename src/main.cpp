@@ -1,12 +1,31 @@
-#include <Arduino.h>
-#include <Wire.h>
-#include <MPU6500_WE.h>
-#include <Adafruit_BMP280.h>
 #include "MAX30105.h"
 #include "heartRate.h"
+#include <Adafruit_BMP280.h>
 #include <Adafruit_Sensor.h>
+#include <Arduino.h>
 #include <DHT.h>
 #include <DHT_U.h>
+#include <MPU6500_WE.h>
+#include <Wire.h>
+
+#include "LittleFS.h"
+#include <Arduino_JSON.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <WiFi.h>
+
+// ========== WIFI CREDENTIALS ==========
+const char *ssid = "ssid";
+const char *password = "password";
+
+// Create AsyncWebServer object on port 80
+AsyncWebServer server(80);
+
+// Create an Event Source on /events
+AsyncEventSource events("/events");
+
+// Json Variable to Hold Sensor Readings
+JSONVar readings;
 
 // ========== SENSOR SETUP ==========
 // MPU6500 setup
@@ -39,23 +58,144 @@ DHT_Unified dht(DHTPIN, DHTTYPE);
 
 // ========== TIMING VARIABLES ==========
 unsigned long lastSensorRead = 0;
-const unsigned long SENSOR_INTERVAL = 500;
+const unsigned long SENSOR_INTERVAL = 250;
+
+// Web server timing variables
+unsigned long lastWebUpdate = 0;
+const unsigned long WEB_UPDATE_INTERVAL = 250;
+
+// ========== WEB SERVER FUNCTIONS ==========
+void initLittleFS() {
+  if (!LittleFS.begin()) {
+    Serial.println("An error has occurred while mounting LittleFS");
+  }
+  Serial.println("LittleFS mounted successfully");
+}
+
+// Initialize WiFi
+void initWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.println("");
+  Serial.print("Connecting to WiFi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(1000);
+  }
+  Serial.println("");
+  Serial.print("WiFi connected! IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+String getAllSensorReadings() {
+  // Clear previous readings
+  readings = JSONVar();
+
+  // ========== IMU DATA (MPU6500) ==========
+  xyzFloat gValue = myMPU6500.getGValues();
+  xyzFloat gyr = myMPU6500.getGyrValues();
+  float mpuTemp = myMPU6500.getTemperature();
+  float resultantG = myMPU6500.getResultantG(gValue);
+
+  readings["accX"] = String(gValue.x, 3);
+  readings["accY"] = String(gValue.y, 3);
+  readings["accZ"] = String(gValue.z, 3);
+  readings["resultantG"] = String(resultantG, 3);
+  readings["gyroX"] = String(gyr.x, 2);
+  readings["gyroY"] = String(gyr.y, 2);
+  readings["gyroZ"] = String(gyr.z, 2);
+  readings["mpuTemp"] = String(mpuTemp, 1);
+
+  // ========== ENVIRONMENTAL DATA (BMP280) ==========
+  if (bmp.takeForcedMeasurement()) {
+    float bmpTemperature = bmp.readTemperature();
+    float pressure = bmp.readPressure();
+    float altitude = bmp.readAltitude(1013.25);
+
+    readings["bmpTemp"] = String(bmpTemperature, 1);
+    readings["pressure"] = String(pressure / 100.0, 1); // Convert Pa to hPa
+    readings["altitude"] = String(altitude, 1);
+  } else {
+    readings["bmpTemp"] = "Error";
+    readings["pressure"] = "Error";
+    readings["altitude"] = "Error";
+  }
+
+  // ========== DHT22 ENVIRONMENTAL DATA ==========
+  sensors_event_t event;
+  dht.temperature().getEvent(&event);
+  if (!isnan(event.temperature)) {
+    readings["dhtTemp"] = String(event.temperature, 1);
+  } else {
+    readings["dhtTemp"] = "Error";
+  }
+
+  dht.humidity().getEvent(&event);
+  if (!isnan(event.relative_humidity)) {
+    readings["humidity"] = String(event.relative_humidity, 1);
+
+    // Calculate heat index if both values are valid
+    sensors_event_t tempEvent;
+    dht.temperature().getEvent(&tempEvent);
+    if (!isnan(tempEvent.temperature)) {
+      float tempF = tempEvent.temperature * 9.0 / 5.0 + 32.0;
+      float humidity = event.relative_humidity;
+
+      if (tempF >= 80.0 && humidity >= 40.0) {
+        float heatIndexF =
+            -42.379 + 2.04901523 * tempF + 10.14333127 * humidity -
+            0.22475541 * tempF * humidity - 6.83783e-3 * tempF * tempF -
+            5.481717e-2 * humidity * humidity +
+            1.22874e-3 * tempF * tempF * humidity +
+            8.5282e-4 * tempF * humidity * humidity -
+            1.99e-6 * tempF * tempF * humidity * humidity;
+        float heatIndexC = (heatIndexF - 32.0) * 5.0 / 9.0;
+        readings["heatIndex"] = String(heatIndexC, 1);
+      } else {
+        readings["heatIndex"] = "N/A";
+      }
+    }
+  } else {
+    readings["humidity"] = "Error";
+    readings["heatIndex"] = "Error";
+  }
+
+  // ========== BIOMETRIC DATA (MAX30105) ==========
+  long irValue = particleSensor.getIR();
+  readings["irValue"] = String(irValue);
+
+  if (irValue >= 50000) {
+    readings["heartRate"] = String(beatsPerMinute, 1);
+    readings["avgHeartRate"] = String(beatAvg);
+    readings["fingerDetected"] = "true";
+  } else {
+    readings["heartRate"] = "0";
+    readings["avgHeartRate"] = "0";
+    readings["fingerDetected"] = "false";
+  }
+
+  String jsonString = JSON.stringify(readings);
+  return jsonString;
+}
 
 void setup() {
   Serial.begin(115200);
   Wire.begin();
 
   Serial.println("====================================");
-  Serial.println("    MULTI-SENSOR INITIALIZATION    ");
+  Serial.println("    MULTI-SENSOR WEB SERVER INIT   ");
   Serial.println("====================================");
+
+  // Initialize WiFi and file system
+  initWiFi();
+  initLittleFS();
 
   // ========== INITIALIZE MPU6500 ==========
   Serial.print("MPU6500 (IMU)............ ");
-  if(!myMPU6500.init()){
+  if (!myMPU6500.init()) {
     Serial.println("FAILED");
     Serial.println("ERROR: MPU6500 does not respond!");
-  }
-  else{
+  } else {
     Serial.println("OK");
 
     Serial.println("Calibrating MPU6500 - Keep sensor flat and still...");
@@ -78,15 +218,12 @@ void setup() {
   if (!bmp.begin(BMP280_ADDRESS_ALT)) {
     Serial.println("FAILED");
     Serial.println("ERROR: Could not find BMP280 sensor!");
-  }
-  else{
+  } else {
     Serial.println("OK");
 
     // Configure BMP280
-    bmp.setSampling(Adafruit_BMP280::MODE_FORCED,
-                    Adafruit_BMP280::SAMPLING_X2,
-                    Adafruit_BMP280::SAMPLING_X16,
-                    Adafruit_BMP280::FILTER_X16,
+    bmp.setSampling(Adafruit_BMP280::MODE_FORCED, Adafruit_BMP280::SAMPLING_X2,
+                    Adafruit_BMP280::SAMPLING_X16, Adafruit_BMP280::FILTER_X16,
                     Adafruit_BMP280::STANDBY_MS_500);
   }
 
@@ -95,24 +232,16 @@ void setup() {
   if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
     Serial.println("FAILED");
     Serial.println("ERROR: MAX30105 was not found!");
-  }
-  else{
+  } else {
     Serial.println("OK");
 
     particleSensor.setup();
-
-    // particleSensor.setPulseAmplitudeRed(0x0A);
-    // particleSensor.setPulseAmplitudeGreen(0);
-
-    // particleSensor.setPulseAmplitudeRed(0x50);
-    // particleSensor.setPulseAmplitudeIR(0x7F);
-    // particleSensor.setPulseAmplitudeGreen(0);
   }
 
   // ========== INITIALIZE DHT22 ==========
   Serial.print("DHT22 (Temp/Humidity)... ");
   dht.begin();
-  
+
   sensor_t sensor;
   dht.temperature().getSensor(&sensor);
   if (sensor.name) {
@@ -127,9 +256,36 @@ void setup() {
     Serial.println("ERROR: DHT22 sensor not responding!");
   }
 
+  // ========== SETUP WEB SERVER ==========
+  // Handle Web Server Routes
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(LittleFS, "/index.html", "text/html");
+  });
+
+  server.serveStatic("/", LittleFS, "/");
+
+  // API endpoint to get all sensor data
+  server.on("/sensors", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(200, "application/json", getAllSensorReadings());
+  });
+
+  // Handle Web Server Events
+  events.onConnect([](AsyncEventSourceClient *client) {
+    if (client->lastId()) {
+      Serial.printf("Client reconnected! Last message ID: %u\n",
+                    client->lastId());
+    }
+    client->send("hello!", NULL, millis(), 10000);
+  });
+  server.addHandler(&events);
+
+  server.begin();
+
   Serial.println("====================================");
   Serial.println("   ALL SENSORS INITIALIZED!        ");
   Serial.println("Place finger on MAX30105 sensor    ");
+  Serial.print("Web server started at: http://");
+  Serial.println(WiFi.localIP());
   Serial.println("====================================");
   Serial.println();
 
@@ -137,9 +293,12 @@ void setup() {
 }
 
 void printSensorData(long irValue) {
-  Serial.println("══════════════════════════════════════════════════════════════════════");
-  Serial.println("                           SENSOR READINGS                           ");
-  Serial.println("══════════════════════════════════════════════════════════════════════");
+  Serial.println(
+      "══════════════════════════════════════════════════════════════════════");
+  Serial.println(
+      "                           SENSOR READINGS                           ");
+  Serial.println(
+      "══════════════════════════════════════════════════════════════════════");
 
   // ========== IMU DATA (MPU6500) ==========
   xyzFloat gValue = myMPU6500.getGValues();
@@ -147,8 +306,10 @@ void printSensorData(long irValue) {
   float mpuTemp = myMPU6500.getTemperature();
   float resultantG = myMPU6500.getResultantG(gValue);
 
-  Serial.println(" 📐 ACCELEROMETER & GYROSCOPE (MPU6500)                              ");
-  Serial.println("──────────────────────────────────────────────────────────────────────");
+  Serial.println(
+      " 📐 ACCELEROMETER & GYROSCOPE (MPU6500)                              ");
+  Serial.println(
+      "──────────────────────────────────────────────────────────────────────");
   Serial.print(" Acceleration (g): X=");
   Serial.print(gValue.x, 3);
   Serial.print(" | Y=");
@@ -171,9 +332,12 @@ void printSensorData(long irValue) {
   Serial.println(" °C                                      ");
 
   // ========== ENVIRONMENTAL DATA (BMP280) ==========
-  Serial.println("──────────────────────────────────────────────────────────────────────");
-  Serial.println(" 🌡️  ENVIRONMENTAL SENSORS (BMP280)                                   ");
-  Serial.println("──────────────────────────────────────────────────────────────────────");
+  Serial.println(
+      "──────────────────────────────────────────────────────────────────────");
+  Serial.println(
+      " 🌡️  ENVIRONMENTAL SENSORS (BMP280)                                   ");
+  Serial.println(
+      "──────────────────────────────────────────────────────────────────────");
 
   if (bmp.takeForcedMeasurement()) {
     float bmpTemperature = bmp.readTemperature();
@@ -192,19 +356,24 @@ void printSensorData(long irValue) {
     Serial.print(altitude, 1);
     Serial.println(" m                                            ");
   } else {
-    Serial.println(" ⚠️  BMP280 measurement failed!                                        ");
+    Serial.println(" ⚠️  BMP280 measurement failed!                             "
+                   "           ");
   }
 
   // ========== DHT22 ENVIRONMENTAL DATA ==========
-  Serial.println("──────────────────────────────────────────────────────────────────────");
-  Serial.println(" 🌡️💧 TEMPERATURE & HUMIDITY (DHT22)                                  ");
-  Serial.println("──────────────────────────────────────────────────────────────────────");
+  Serial.println(
+      "──────────────────────────────────────────────────────────────────────");
+  Serial.println(
+      " 🌡️💧 TEMPERATURE & HUMIDITY (DHT22)                                  ");
+  Serial.println(
+      "──────────────────────────────────────────────────────────────────────");
 
   // Get temperature event
   sensors_event_t event;
   dht.temperature().getEvent(&event);
   if (isnan(event.temperature)) {
-    Serial.println(" ⚠️  Error reading DHT22 temperature!                                 ");
+    Serial.println(" ⚠️  Error reading DHT22 temperature!                       "
+                   "          ");
   } else {
     Serial.print(" DHT Temperature: ");
     Serial.print(event.temperature, 1);
@@ -214,48 +383,59 @@ void printSensorData(long irValue) {
   // Get humidity event
   dht.humidity().getEvent(&event);
   if (isnan(event.relative_humidity)) {
-    Serial.println(" ⚠️  Error reading DHT22 humidity!                                    ");
+    Serial.println(" ⚠️  Error reading DHT22 humidity!                          "
+                   "          ");
   } else {
     Serial.print(" Humidity: ");
     Serial.print(event.relative_humidity, 1);
     Serial.println(" %                                           ");
-    
+
     // Calculate heat index if both temperature and humidity are valid
     if (!isnan(event.relative_humidity)) {
       sensors_event_t tempEvent;
       dht.temperature().getEvent(&tempEvent);
       if (!isnan(tempEvent.temperature)) {
         // Simple heat index calculation (Fahrenheit based, converted)
-        float tempF = tempEvent.temperature * 9.0/5.0 + 32.0; // Convert to Fahrenheit
+        float tempF =
+            tempEvent.temperature * 9.0 / 5.0 + 32.0; // Convert to Fahrenheit
         float humidity = event.relative_humidity;
-        
+
         if (tempF >= 80.0 && humidity >= 40.0) {
-          float heatIndexF = -42.379 + 2.04901523*tempF + 10.14333127*humidity 
-                           - 0.22475541*tempF*humidity - 6.83783e-3*tempF*tempF 
-                           - 5.481717e-2*humidity*humidity + 1.22874e-3*tempF*tempF*humidity 
-                           + 8.5282e-4*tempF*humidity*humidity - 1.99e-6*tempF*tempF*humidity*humidity;
-          float heatIndexC = (heatIndexF - 32.0) * 5.0/9.0; // Convert back to Celsius
+          float heatIndexF =
+              -42.379 + 2.04901523 * tempF + 10.14333127 * humidity -
+              0.22475541 * tempF * humidity - 6.83783e-3 * tempF * tempF -
+              5.481717e-2 * humidity * humidity +
+              1.22874e-3 * tempF * tempF * humidity +
+              8.5282e-4 * tempF * humidity * humidity -
+              1.99e-6 * tempF * tempF * humidity * humidity;
+          float heatIndexC =
+              (heatIndexF - 32.0) * 5.0 / 9.0; // Convert back to Celsius
           Serial.print(" Heat Index: ");
           Serial.print(heatIndexC, 1);
           Serial.println(" °C                                        ");
         } else {
-          Serial.println(" Heat Index: N/A (conditions not met)                            ");
+          Serial.println(" Heat Index: N/A (conditions not met)                "
+                         "            ");
         }
       }
     }
   }
 
   // ========== BIOMETRIC DATA (MAX30105) ==========
-  Serial.println("──────────────────────────────────────────────────────────────────────");
-  Serial.println(" ❤️  HEART RATE MONITOR (MAX30105)                                    ");
-  Serial.println("──────────────────────────────────────────────────────────────────────");
+  Serial.println(
+      "──────────────────────────────────────────────────────────────────────");
+  Serial.println(
+      " ❤️  HEART RATE MONITOR (MAX30105)                                    ");
+  Serial.println(
+      "──────────────────────────────────────────────────────────────────────");
 
   Serial.print(" IR Signal: ");
   Serial.print(irValue);
 
   if (irValue < 50000) {
     Serial.println("                                          ");
-    Serial.println(" ⚠️  No finger detected - Place finger on sensor                      ");
+    Serial.println(" ⚠️  No finger detected - Place finger on sensor            "
+                   "          ");
   } else {
     Serial.println("                                    ");
     Serial.print(" Heart Rate: ");
@@ -265,14 +445,17 @@ void printSensorData(long irValue) {
       Serial.print(" Average BPM: ");
       Serial.print(beatAvg);
       Serial.println("                                              ");
-      Serial.println(" ✅ Finger detected - Good signal quality                            ");
+      Serial.println(" ✅ Finger detected - Good signal quality                "
+                     "            ");
     } else {
       Serial.println("Calculating...                             ");
-      Serial.println(" 🔄 Detecting heartbeat...                                           ");
+      Serial.println(" 🔄 Detecting heartbeat...                               "
+                     "            ");
     }
   }
 
-  Serial.println("══════════════════════════════════════════════════════════════════════");
+  Serial.println(
+      "══════════════════════════════════════════════════════════════════════");
   Serial.println();
 }
 
@@ -299,10 +482,18 @@ void loop() {
     }
   }
 
-  // ========== PERIODIC SENSOR READINGS ==========
+  // ========== PERIODIC SENSOR READINGS (Serial Output) ==========
   if (millis() - lastSensorRead >= SENSOR_INTERVAL) {
     lastSensorRead = millis();
 
-    printSensorData(irValue);
+    // printSensorData(irValue);
+  }
+
+  // ========== PERIODIC WEB UPDATES ==========
+  if (millis() - lastWebUpdate >= WEB_UPDATE_INTERVAL) {
+    lastWebUpdate = millis();
+
+    // Send all sensor data to connected web clients
+    events.send(getAllSensorReadings().c_str(), "sensor_readings", millis());
   }
 }
