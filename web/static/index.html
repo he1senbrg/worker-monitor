@@ -625,12 +625,13 @@
     <span id="alertMessage">Sensor connection lost. Attempting to reconnect...</span>
   </div>
 
-  <script>
+    <script>
     let scene, camera, renderer, cube;
     let connectionStatus = document.getElementById('connectionStatus');
     let statusText = document.getElementById('statusText');
     let alertBox = document.getElementById('alertBox');
     let lastUpdateTime = Date.now();
+    let pollingInterval;
 
     function parentWidth(elem) {
       return elem.parentElement.clientWidth;
@@ -703,99 +704,102 @@
       console.log('Reset:', element.id);
     }
 
-    // Initialize 3D visualization
-    window.addEventListener('resize', onWindowResize, false);
-    init3D();
-
-    // Server-Sent Events connection
-    if (!!window.EventSource) {
-      var source = new EventSource('/events');
-
-      source.addEventListener('open', function(e) {
-        console.log("Events Connected");
+    function updateSensorValues(data) {
+      try {
+        lastUpdateTime = Date.now();
         updateConnectionStatus(true);
-      }, false);
 
-      source.addEventListener('error', function(e) {
-        if (e.target.readyState != EventSource.OPEN) {
-          console.log("Events Disconnected");
-          updateConnectionStatus(false);
+        // Update IMU data
+        document.getElementById("accX").innerHTML = data.acc_x || "0.000";
+        document.getElementById("accY").innerHTML = data.acc_y || "0.000";
+        document.getElementById("accZ").innerHTML = data.acc_z || "0.000";
+        document.getElementById("resultantG").innerHTML = data.resultant_g || "0.000";
+        document.getElementById("gyroX").innerHTML = data.gyro_x || "0.00";
+        document.getElementById("gyroY").innerHTML = data.gyro_y || "0.00";
+        document.getElementById("gyroZ").innerHTML = data.gyro_z || "0.00";
+        document.getElementById("mpuTemp").innerHTML = data.mpu_temp || "0.0";
+
+        // Update environmental data
+        document.getElementById("bmpTemp").innerHTML = data.bmp_temp || "Error";
+        document.getElementById("pressure").innerHTML = data.pressure || "Error";
+        document.getElementById("altitude").innerHTML = data.altitude || "Error";
+        document.getElementById("dhtTemp").innerHTML = data.dht_temp || "Error";
+        document.getElementById("humidity").innerHTML = data.humidity || "Error";
+        document.getElementById("heatIndex").innerHTML = data.heat_index || "N/A";
+
+        // Update heart rate data
+        document.getElementById("heartRate").innerHTML = data.heart_rate || "--";
+        document.getElementById("avgHeartRate").innerHTML = data.avg_heart_rate || "--";
+        document.getElementById("irValue").innerHTML = data.ir_value || "0";
+        
+        // Update heart rate status
+        const heartStatus = document.getElementById("heartStatus");
+        if (data.finger_detected) {
+          heartStatus.innerHTML = "Finger detected - Good signal";
+          heartStatus.style.color = "#3fb950";
+          heartStatus.style.borderColor = "#2ea043";
+          heartStatus.style.backgroundColor = "#0d2818";
+          updateHeartAnimation(parseFloat(data.heart_rate));
+        } else {
+          heartStatus.innerHTML = "Place finger on sensor";
+          heartStatus.style.color = "#f2cc60";
+          heartStatus.style.borderColor = "#d29922";
+          heartStatus.style.backgroundColor = "#332600";
         }
-      }, false);
 
-      // Handle all sensor data updates
-      source.addEventListener('sensor_readings', function(e) {
-        try {
-          var data = JSON.parse(e.data);
-          lastUpdateTime = Date.now();
-          updateConnectionStatus(true);
-
-          // Update IMU data
-          document.getElementById("accX").innerHTML = data.accX || "0.000";
-          document.getElementById("accY").innerHTML = data.accY || "0.000";
-          document.getElementById("accZ").innerHTML = data.accZ || "0.000";
-          document.getElementById("resultantG").innerHTML = data.resultantG || "0.000";
-          document.getElementById("gyroX").innerHTML = data.gyroX || "0.00";
-          document.getElementById("gyroY").innerHTML = data.gyroY || "0.00";
-          document.getElementById("gyroZ").innerHTML = data.gyroZ || "0.00";
-          document.getElementById("mpuTemp").innerHTML = data.mpuTemp || "0.0";
-
-          // Update environmental data
-          document.getElementById("bmpTemp").innerHTML = data.bmpTemp || "Error";
-          document.getElementById("pressure").innerHTML = data.pressure || "Error";
-          document.getElementById("altitude").innerHTML = data.altitude || "Error";
-          document.getElementById("dhtTemp").innerHTML = data.dhtTemp || "Error";
-          document.getElementById("humidity").innerHTML = data.humidity || "Error";
-          document.getElementById("heatIndex").innerHTML = data.heatIndex || "N/A";
-
-          // Update heart rate data
-          document.getElementById("heartRate").innerHTML = data.heartRate || "--";
-          document.getElementById("avgHeartRate").innerHTML = data.avgHeartRate || "--";
-          document.getElementById("irValue").innerHTML = data.irValue || "0";
+        // Update 3D cube rotation
+        if (cube) {
+          // Convert gyroscope readings to radians for rotation
+          const gyroXRad = parseFloat(data.gyro_x) * Math.PI / 180;
+          const gyroYRad = parseFloat(data.gyro_y) * Math.PI / 180;
+          const gyroZRad = parseFloat(data.gyro_z) * Math.PI / 180;
           
-          // Update heart rate status
-          const heartStatus = document.getElementById("heartStatus");
-          if (data.fingerDetected === "true") {
-            heartStatus.innerHTML = "Finger detected - Good signal";
-            heartStatus.style.color = "#3fb950";
-            heartStatus.style.borderColor = "#2ea043";
-            heartStatus.style.backgroundColor = "#0d2818";
-            updateHeartAnimation(parseFloat(data.heartRate));
-          } else {
-            heartStatus.innerHTML = "Place finger on sensor";
-            heartStatus.style.color = "#f2cc60";
-            heartStatus.style.borderColor = "#d29922";
-            heartStatus.style.backgroundColor = "#332600";
-          }
-
-          // Update 3D cube rotation
-          if (cube) {
-            // Convert gyroscope readings to radians for rotation
-            const gyroXRad = parseFloat(data.gyroX) * Math.PI / 180;
-            const gyroYRad = parseFloat(data.gyroY) * Math.PI / 180;
-            const gyroZRad = parseFloat(data.gyroZ) * Math.PI / 180;
-            
-            cube.rotation.x = gyroYRad;
-            cube.rotation.z = gyroXRad;
-            cube.rotation.y = gyroZRad;
-            renderer.render(scene, camera);
-          }
-
-        } catch (error) {
-          console.error('Error parsing sensor data:', error);
+          cube.rotation.x = gyroYRad;
+          cube.rotation.z = gyroXRad;
+          cube.rotation.y = gyroZRad;
+          renderer.render(scene, camera);
         }
-      }, false);
-
-    } else {
-      alert("Your browser doesn't support Server-Sent Events. Please use a modern browser.");
+      } catch (error) {
+        console.error('Error updating sensor values:', error);
+      }
     }
 
-    // Connection watchdog
-    setInterval(function() {
-      if (Date.now() - lastUpdateTime > 5000) {
+    // Function to fetch the most recent data from the backend
+    async function fetchLatestData() {
+      try {
+        const response = await fetch('/data?limit=1');
+        if (!response.ok) {
+          throw new Error(`HTTP error: ${response.status}`);
+        }
+        const data = await response.json();
+        if (data && data.length > 0) {
+          updateSensorValues(data[0]);
+        }
+      } catch (error) {
+        console.error('Error fetching data:', error);
         updateConnectionStatus(false);
       }
-    }, 2000);
+    }
+
+    // Initialize 3D visualization
+    window.addEventListener('load', function() {
+      connectionStatus = document.getElementById('connectionStatus');
+      statusText = document.getElementById('statusText');
+      alertBox = document.getElementById('alertBox');
+
+      window.addEventListener('resize', onWindowResize, false);
+      init3D();
+
+      // Start polling for data
+      pollingInterval = setInterval(fetchLatestData, 10);
+
+      // Connection watchdog
+      setInterval(function() {
+        if (Date.now() - lastUpdateTime > 5000) {
+          updateConnectionStatus(false);
+        }
+      }, 2000);
+    });
   </script>
 </body>
 </html>
