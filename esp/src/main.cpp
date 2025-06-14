@@ -1,24 +1,25 @@
 #include "MAX30105.h"
 #include "heartRate.h"
+#include "secrets.h"
 #include <Adafruit_BMP280.h>
 #include <Adafruit_Sensor.h>
 #include <Arduino.h>
+#include <Arduino_JSON.h>
 #include <DHT.h>
 #include <DHT_U.h>
 #include <MPU6500_WE.h>
-#include <Wire.h>
-#include <WiFi.h>
 #include <WebSocketsClient.h>
-#include <Arduino_JSON.h>
+#include <WiFi.h>
+#include <Wire.h>
 
-// ========== WIFI CREDENTIALS ==========
-const char *ssid = "ssid";
-const char *password = "password";
+// WIFI CREDENTIALS
+const char *ssid = WIFI_SSID;
+const char *password = WIFI_PASSWORD;
 
-// ========== WEBSOCKET SERVER CONFIG ==========
-const char* websocket_server = "ip"; // Replace with your PC's IP
-const int websocket_port = 8765;
-const char* websocket_path = "/";
+// WEBSOCKET SERVER CONFIG
+const char *websocket_server = SERVER_IP;
+const int websocket_port = SERVER_PORT;
+const char *websocket_path = "/";
 
 // Create WebSocket client
 WebSocketsClient webSocket;
@@ -26,24 +27,6 @@ WebSocketsClient webSocket;
 // Json Variable to Hold Sensor Readings
 JSONVar readings;
 
-// ========== KALMAN FILTER STRUCTURE ==========
-struct KalmanFilter {
-  float Q;     // Process noise covariance
-  float R;     // Measurement noise covariance
-  float P;     // Estimation error covariance
-  float K;     // Kalman gain
-  float X;     // Estimated value
-};
-
-// Initialize Kalman filters for MPU6500 data
-KalmanFilter kalman_accX = {0.01, 0.1, 1, 0, 0};
-KalmanFilter kalman_accY = {0.01, 0.1, 1, 0, 0};
-KalmanFilter kalman_accZ = {0.01, 0.1, 1, 0, 0};
-KalmanFilter kalman_gyroX = {0.01, 0.1, 1, 0, 0};
-KalmanFilter kalman_gyroY = {0.01, 0.1, 1, 0, 0};
-KalmanFilter kalman_gyroZ = {0.01, 0.1, 1, 0, 0};
-
-// ========== SENSOR SETUP ==========
 // MPU6500 setup
 #define MPU6500_ADDR 0x68
 MPU6500_WE myMPU6500 = MPU6500_WE(MPU6500_ADDR);
@@ -72,44 +55,31 @@ int beatAvg = 0;
 #define DHTTYPE DHT22
 DHT_Unified dht(DHTPIN, DHTTYPE);
 
-// ========== TIMING VARIABLES ==========
+// TIMING VARIABLES
 unsigned long lastSensorRead = 0;
-const unsigned long SENSOR_INTERVAL = 10; // Send data every 100ms
+const unsigned long SENSOR_INTERVAL = 10; // Send data every 10ms
 
-// ========== KALMAN FILTER FUNCTIONS ==========
-float kalmanUpdate(KalmanFilter* kf, float measurement) {
-  // Prediction step
-  kf->P = kf->P + kf->Q;
-  
-  // Update step
-  kf->K = kf->P / (kf->P + kf->R);
-  kf->X = kf->X + kf->K * (measurement - kf->X);
-  kf->P = (1 - kf->K) * kf->P;
-  
-  return kf->X;
-}
+// WEBSOCKET FUNCTIONS
+void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
+  switch (type) {
+  case WStype_DISCONNECTED:
+    Serial.println("WebSocket Disconnected");
+    break;
 
-// ========== WEBSOCKET FUNCTIONS ==========
-void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
-  switch(type) {
-    case WStype_DISCONNECTED:
-      Serial.println("WebSocket Disconnected");
-      break;
-      
-    case WStype_CONNECTED:
-      Serial.printf("WebSocket Connected to: %s\n", payload);
-      break;
-      
-    case WStype_TEXT:
-      Serial.printf("Received: %s\n", payload);
-      break;
-      
-    case WStype_ERROR:
-      Serial.println("WebSocket Error");
-      break;
-      
-    default:
-      break;
+  case WStype_CONNECTED:
+    Serial.printf("WebSocket Connected to: %s\n", payload);
+    break;
+
+  case WStype_TEXT:
+    Serial.printf("Received: %s\n", payload);
+    break;
+
+  case WStype_ERROR:
+    Serial.println("WebSocket Error");
+    break;
+
+  default:
+    break;
   }
 }
 
@@ -128,45 +98,33 @@ void initWiFi() {
 }
 
 String getAllSensorReadings() {
-  // Clear previous readings
   readings = JSONVar();
-  
-  // Add timestamp
+
   readings["timestamp"] = millis();
 
-  // ========== IMU DATA (MPU6500) WITH KALMAN FILTERING ==========
   xyzFloat gValue = myMPU6500.getGValues();
   xyzFloat gyr = myMPU6500.getGyrValues();
   float mpuTemp = myMPU6500.getTemperature();
-  
-  // Apply Kalman filtering
-  float filteredAccX = kalmanUpdate(&kalman_accX, gValue.x);
-  float filteredAccY = kalmanUpdate(&kalman_accY, gValue.y);
-  float filteredAccZ = kalmanUpdate(&kalman_accZ, gValue.z);
-  float filteredGyroX = kalmanUpdate(&kalman_gyroX, gyr.x);
-  float filteredGyroY = kalmanUpdate(&kalman_gyroY, gyr.y);
-  float filteredGyroZ = kalmanUpdate(&kalman_gyroZ, gyr.z);
-  
-  // Calculate filtered resultant G
-  float resultantG = sqrt(filteredAccX*filteredAccX + filteredAccY*filteredAccY + filteredAccZ*filteredAccZ);
 
-  readings["accX"] = String(filteredAccX, 3);
-  readings["accY"] = String(filteredAccY, 3);
-  readings["accZ"] = String(filteredAccZ, 3);
+  float resultantG =
+      sqrt(gValue.x * gValue.x + gValue.y * gValue.y + gValue.z * gValue.z);
+
+  readings["accX"] = String(gValue.x, 3);
+  readings["accY"] = String(gValue.y, 3);
+  readings["accZ"] = String(gValue.z, 3);
   readings["resultantG"] = String(resultantG, 3);
-  readings["gyroX"] = String(filteredGyroX, 2);
-  readings["gyroY"] = String(filteredGyroY, 2);
-  readings["gyroZ"] = String(filteredGyroZ, 2);
+  readings["gyroX"] = String(gyr.x, 2);
+  readings["gyroY"] = String(gyr.y, 2);
+  readings["gyroZ"] = String(gyr.z, 2);
   readings["mpuTemp"] = String(mpuTemp, 1);
 
-  // ========== ENVIRONMENTAL DATA (BMP280) ==========
   if (bmp.takeForcedMeasurement()) {
     float bmpTemperature = bmp.readTemperature();
     float pressure = bmp.readPressure();
     float altitude = bmp.readAltitude(1013.25);
 
     readings["bmpTemp"] = String(bmpTemperature, 1);
-    readings["pressure"] = String(pressure / 100.0, 1); // Convert Pa to hPa
+    readings["pressure"] = String(pressure / 100.0, 1);
     readings["altitude"] = String(altitude, 1);
   } else {
     readings["bmpTemp"] = "Error";
@@ -174,7 +132,6 @@ String getAllSensorReadings() {
     readings["altitude"] = "Error";
   }
 
-  // ========== DHT22 ENVIRONMENTAL DATA ==========
   sensors_event_t event;
   dht.temperature().getEvent(&event);
   if (!isnan(event.temperature)) {
@@ -187,7 +144,6 @@ String getAllSensorReadings() {
   if (!isnan(event.relative_humidity)) {
     readings["humidity"] = String(event.relative_humidity, 1);
 
-    // Calculate heat index if both values are valid
     sensors_event_t tempEvent;
     dht.temperature().getEvent(&tempEvent);
     if (!isnan(tempEvent.temperature)) {
@@ -213,7 +169,6 @@ String getAllSensorReadings() {
     readings["heatIndex"] = "Error";
   }
 
-  // ========== BIOMETRIC DATA (MAX30105) ==========
   long irValue = particleSensor.getIR();
   readings["irValue"] = String(irValue);
 
@@ -235,15 +190,9 @@ void setup() {
   Serial.begin(115200);
   Wire.begin();
 
-  Serial.println("====================================");
-  Serial.println("  MULTI-SENSOR WEBSOCKET CLIENT    ");
-  Serial.println("====================================");
-
-  // Initialize WiFi
   initWiFi();
 
-  // ========== INITIALIZE MPU6500 ==========
-  Serial.print("MPU6500 (IMU)............ ");
+  Serial.print("MPU6500 (IMU)...");
   if (!myMPU6500.init()) {
     Serial.println("FAILED");
   } else {
@@ -253,7 +202,6 @@ void setup() {
     myMPU6500.autoOffsets();
     Serial.println("MPU6500 calibration complete!");
 
-    // Configure MPU6500
     myMPU6500.enableGyrDLPF();
     myMPU6500.setGyrDLPF(MPU6500_DLPF_6);
     myMPU6500.setSampleRateDivider(5);
@@ -263,8 +211,7 @@ void setup() {
     myMPU6500.setAccDLPF(MPU6500_DLPF_6);
   }
 
-  // ========== INITIALIZE BMP280 ==========
-  Serial.print("BMP280 (Pressure)........ ");
+  Serial.print("BMP280 (Pressure)...");
   if (!bmp.begin(BMP280_ADDRESS_ALT)) {
     Serial.println("FAILED");
   } else {
@@ -274,39 +221,35 @@ void setup() {
                     Adafruit_BMP280::STANDBY_MS_500);
   }
 
-  // ========== INITIALIZE MAX30105 ==========
-  Serial.print("MAX30105 (Heart Rate).... ");
+  Serial.print("MAX30105 (Heart Rate)...");
   if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
     Serial.println("FAILED");
   } else {
     Serial.println("OK");
     particleSensor.setup();
+    particleSensor.setPulseAmplitudeRed(10);
+    particleSensor.setPulseAmplitudeIR(10);
+    particleSensor.setPulseAmplitudeGreen(50);
   }
 
-  // ========== INITIALIZE DHT22 ==========
-  Serial.print("DHT22 (Temp/Humidity)... ");
+  Serial.print("DHT22 (Temp/Humidity)...");
   dht.begin();
   Serial.println("OK");
 
-  // ========== INITIALIZE WEBSOCKET ==========
-  Serial.print("WebSocket connection..... ");
+  Serial.print("WebSocket connection...");
   webSocket.begin(websocket_server, websocket_port, websocket_path);
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000);
   Serial.println("Connecting...");
 
-  Serial.println("====================================");
-  Serial.println("   ALL SENSORS INITIALIZED!        ");
-  Serial.println("====================================");
+  Serial.println("ALL SENSORS INITIALIZED!");
 
   delay(500);
 }
 
 void loop() {
-  // Handle WebSocket events
   webSocket.loop();
 
-  // ========== CONTINUOUS HEART RATE MONITORING ==========
   long irValue = particleSensor.getIR();
 
   if (checkForBeat(irValue) == true) {
@@ -328,15 +271,12 @@ void loop() {
     }
   }
 
-  // ========== PERIODIC SENSOR READINGS AND WEBSOCKET TRANSMISSION ==========
   if (millis() - lastSensorRead >= SENSOR_INTERVAL) {
     lastSensorRead = millis();
 
-    // Get all sensor data and send via WebSocket
     String sensorData = getAllSensorReadings();
     webSocket.sendTXT(sensorData);
-    
-    // Optional: Print connection status
+
     if (webSocket.isConnected()) {
       Serial.println("Data sent to server");
     } else {
