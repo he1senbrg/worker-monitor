@@ -11,6 +11,14 @@
 #include <WebSocketsClient.h>
 #include <WiFi.h>
 #include <Wire.h>
+#include "FallDetection.h"
+#include <HTTPClient.h>
+
+#define BUZZER_PIN 14
+
+// Fall detection
+FallDetector detector;
+
 
 // WIFI CREDENTIALS
 const char *ssid = WIFI_SSID;
@@ -59,6 +67,31 @@ DHT_Unified dht(DHTPIN, DHTTYPE);
 unsigned long lastSensorRead = 0;
 const unsigned long SENSOR_INTERVAL = 10; // Send data every 10ms
 
+const char* ntfy_topic_url = "https://ntfy.vishnu.studio/wuhahaha";
+
+void sendFallNotification(String message) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(ntfy_topic_url); // ntfy topic endpoint
+    http.addHeader("Content-Type", "text/plain");
+    http.addHeader("Title", "Fall Alert");
+    http.addHeader("Priority", "3"); // 1=low, 5=max
+
+    int httpResponseCode = http.POST(message);
+
+    if (httpResponseCode > 0) {
+      Serial.printf("✅ Notification sent! Response code: %d\n", httpResponseCode);
+    } else {
+      Serial.printf("❌ Failed to send notification. Error code: %d\n", httpResponseCode);
+    }
+
+    http.end();
+  } else {
+    Serial.println("⚠️  WiFi not connected - Cannot send notification");
+  }
+}
+
+
 // WEBSOCKET FUNCTIONS
 void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
   switch (type) {
@@ -71,7 +104,7 @@ void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
     break;
 
   case WStype_TEXT:
-    Serial.printf("Received: %s\n", payload);
+    // Serial.printf("Received: %s\n", payload);
     break;
 
   case WStype_ERROR:
@@ -172,7 +205,7 @@ String getAllSensorReadings() {
   long irValue = particleSensor.getIR();
   readings["irValue"] = String(irValue);
 
-  if (irValue >= 50000) {
+  if (irValue >= 30000) {
     readings["heartRate"] = String(beatsPerMinute, 1);
     readings["avgHeartRate"] = String(beatAvg);
     readings["fingerDetected"] = "true";
@@ -189,6 +222,9 @@ String getAllSensorReadings() {
 void setup() {
   Serial.begin(115200);
   Wire.begin();
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
 
   initWiFi();
 
@@ -227,9 +263,9 @@ void setup() {
   } else {
     Serial.println("OK");
     particleSensor.setup();
-    particleSensor.setPulseAmplitudeRed(10);
-    particleSensor.setPulseAmplitudeIR(10);
-    particleSensor.setPulseAmplitudeGreen(50);
+    // particleSensor.setPulseAmplitudeRed(10);
+    // particleSensor.setPulseAmplitudeIR(10);
+    // particleSensor.setPulseAmplitudeGreen(50);
   }
 
   Serial.print("DHT22 (Temp/Humidity)...");
@@ -252,8 +288,8 @@ void loop() {
 
   long irValue = particleSensor.getIR();
 
+  // HEART RATE DETECTION
   if (checkForBeat(irValue) == true) {
-    // We sensed a beat!
     long delta = millis() - lastBeat;
     lastBeat = millis();
 
@@ -263,7 +299,6 @@ void loop() {
       rates[rateSpot++] = (byte)beatsPerMinute;
       rateSpot %= RATE_SIZE;
 
-      // Calculate average
       long total = 0;
       for (byte x = 0; x < RATE_SIZE; x++)
         total += rates[x];
@@ -271,14 +306,45 @@ void loop() {
     }
   }
 
+  // READ SENSOR DATA AT INTERVAL
   if (millis() - lastSensorRead >= SENSOR_INTERVAL) {
     lastSensorRead = millis();
 
+    // Get accelerometer and gyroscope data
+    xyzFloat acc = myMPU6500.getGValues();
+    xyzFloat gyro = myMPU6500.getGyrValues();
+    float resultantG = sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+
+    // Update fall detection logic
+    detector.update(resultantG, gyro, beatAvg);
+
+    // Trigger detection alerts
+    if (detector.isFallDetected()) {
+    Serial.println("⚠️  FALL DETECTED!");
+    if (detector.isHeartRateCritical()) {
+      Serial.println("❗ CRITICAL: Abnormal heart rate after fall!");
+      sendFallNotification("❗ FALL DETECTED with CRITICAL heart rate!");
+    } else {
+      Serial.println("ℹ️  Heart rate is stable after fall.");
+      sendFallNotification("⚠️ FALL DETECTED but heart rate stable.");
+    }
+
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(BUZZER_PIN, HIGH);
+      delay(300);
+      digitalWrite(BUZZER_PIN, LOW);
+      delay(200);
+    }
+
+  }
+
+
+    // Send all sensor data including heart rate + movement via WebSocket
     String sensorData = getAllSensorReadings();
     webSocket.sendTXT(sensorData);
 
     if (webSocket.isConnected()) {
-      Serial.println("Data sent to server");
+      // Serial.println("Data sent to server");
     } else {
       Serial.println("WebSocket disconnected - attempting reconnect");
     }
