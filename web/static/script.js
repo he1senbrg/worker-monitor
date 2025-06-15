@@ -88,6 +88,96 @@ function resetPosition(element) {
     console.log('Reset:', element.id);
 }
 
+let ecgChart;
+let ecgData = Array(100).fill(0);
+
+function initializeECGChart() {
+    const ctx = document.getElementById('ecgChart').getContext('2d');
+    
+    ecgChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: Array(100).fill(''),
+            datasets: [{
+                label: 'ECG',
+                data: ecgData,
+                borderColor: '#f85149',
+                borderWidth: 1.5,
+                fill: false,
+                tension: 0.1,
+                pointRadius: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: {
+                duration: 0
+            },
+            scales: {
+                x: {
+                    display: false
+                },
+                y: {
+                    display: true,
+                    min: -10,
+                    max: 10,
+                    grid: {
+                        color: '#30363d',
+                        lineWidth: 0.5
+                    },
+                    ticks: {
+                        display: false
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    enabled: false
+                }
+            }
+        }
+    });
+}
+
+function updateECGAnimation(irValue, fingerDetected) {
+    if (!ecgChart) return;
+    
+    // Shift the array to remove the oldest data point
+    ecgData.shift();
+    
+    if (fingerDetected) {
+        // Generate a synthetic ECG-like signal based on the IR value
+        const baseValue = (irValue % 100) / 50 - 1; // Normalize to roughly -1 to 1
+        
+        // Create ECG pattern: occasional "beats" with a random component
+        let newValue;
+        
+        // Occasionally add a "heartbeat" spike
+        if (Math.random() < 0.05) { // 5% chance for a spike
+            newValue = 5 + Math.random() * 3; // Spike upward
+        } else if (ecgData[ecgData.length - 1] > 2) {
+            // After a spike, create a characteristic downward deflection
+            newValue = -3 - Math.random() * 2;
+        } else {
+            // Otherwise, small random variations around baseline
+            newValue = baseValue + (Math.random() - 0.5) * 0.5;
+        }
+        
+        ecgData.push(newValue);
+    } else {
+        // If no finger detected, show a flatline with minimal noise
+        ecgData.push((Math.random() - 0.5) * 0.2);
+    }
+    
+    // Update the chart
+    ecgChart.data.datasets[0].data = ecgData;
+    ecgChart.update();
+}
+
 function updateSensorValues(data) {
     try {
         lastUpdateTime = Date.now();
@@ -98,10 +188,6 @@ function updateSensorValues(data) {
         document.getElementById("accY").innerHTML = data.acc_y || "0.000";
         document.getElementById("accZ").innerHTML = data.acc_z || "0.000";
         document.getElementById("resultantG").innerHTML = parseFloat(data.resultant_g || "0.000").toFixed(3);
-        document.getElementById("gyroX").innerHTML = data.gyro_x || "0.00";
-        document.getElementById("gyroY").innerHTML = data.gyro_y || "0.00";
-        document.getElementById("gyroZ").innerHTML = data.gyro_z || "0.00";
-        document.getElementById("mpuTemp").innerHTML = data.mpu_temp || "0.0";
 
         // Update environmental data
         document.getElementById("bmpTemp").innerHTML = data.bmp_temp || "Error";
@@ -116,16 +202,19 @@ function updateSensorValues(data) {
         document.getElementById("avgHeartRate").innerHTML = data.avg_heart_rate || "--";
         document.getElementById("irValue").innerHTML = data.ir_value || "0";
 
+        // Update ECG visualization
+        updateECGAnimation(parseFloat(data.ir_value) || 0, data.finger_detected);
+
         // Update heart rate status
         const heartStatus = document.getElementById("heartStatus");
         if (data.finger_detected) {
-            heartStatus.innerHTML = "Finger detected - Good signal";
+            heartStatus.innerHTML = "Good signal";
             heartStatus.style.color = "#3fb950";
             heartStatus.style.borderColor = "#2ea043";
             heartStatus.style.backgroundColor = "#0d2818";
             updateHeartAnimation(parseFloat(data.heart_rate));
         } else {
-            heartStatus.innerHTML = "Place finger on sensor";
+            heartStatus.innerHTML = "Place sensor";
             heartStatus.style.color = "#f2cc60";
             heartStatus.style.borderColor = "#d29922";
             heartStatus.style.backgroundColor = "#332600";
@@ -173,9 +262,10 @@ window.addEventListener('load', function() {
 
     window.addEventListener('resize', onWindowResize, false);
     init3D();
+    initializeECGChart();
 
     // Start polling for data
-    pollingInterval = setInterval(fetchLatestData, 100);
+    pollingInterval = setInterval(fetchLatestData, 10);
 
     // Connection watchdog
     setInterval(function() {
