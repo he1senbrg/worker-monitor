@@ -11,8 +11,7 @@ void FallDetector::update(float resultantG, xyzFloat gyro, int heartRate) {
 
   bool impact = (resultantG > IMPACT_THRESHOLD);
   bool still = (resultantG >= ACC_MIN && resultantG <= ACC_MAX) &&
-               (abs(gyro.x) < GYRO_THRESHOLD &&
-                abs(gyro.y) < GYRO_THRESHOLD &&
+               (abs(gyro.x) < GYRO_THRESHOLD && abs(gyro.y) < GYRO_THRESHOLD &&
                 abs(gyro.z) < GYRO_THRESHOLD);
 
   // Step 1: Detect impact
@@ -40,6 +39,4 @@ bool FallDetector::isHeartRateCritical() {
   return (lastHeartRate < 40 || lastHeartRate > 130);
 }
 
-bool FallDetector::isStableAfterFall() {
-  return fallDetected;
-}
+bool FallDetector::isStableAfterFall() { return fallDetected; }
