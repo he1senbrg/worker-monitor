@@ -1,4 +1,5 @@
 #include "FallDetection.h"
+#include "Temperature_monitor.h"
 #include "MAX30105.h"
 #include "RockFall.h"
 #include "heartRate.h"
@@ -15,6 +16,7 @@
 #include <WiFi.h>
 #include <Wire.h>
 
+
 #define BUZZER_PIN 14
 
 // Rock Fall detection in Caves
@@ -24,6 +26,11 @@ const unsigned long ROCKFALL_CHECK_INTERVAL = 1000;
 
 // Fall detection
 FallDetector detector;
+
+
+// Temperature_Monitor
+TemperatureMonitor tempMonitor;
+
 
 // WIFI CREDENTIALS
 const char *ssid = WIFI_SSID;
@@ -130,6 +137,46 @@ void sendRockfallNotification(String message, String status = "warning") {
     Serial.println("⚠️ WiFi not connected - Cannot send rockfall notification");
   }
 }
+
+
+//Temperature
+void sendTemperatureBreakNotification(String message, String status = "alert") {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(ntfy_topic_url);
+    http.addHeader("Content-Type", "text/plain");
+
+    if (status == "alert") {
+      http.addHeader("Title", "🌡️ Temperature Alert");
+      http.addHeader("Priority", "3");
+    } else if (status == "high") {
+      http.addHeader("Title", "🔥 High Temperature Warning");
+      http.addHeader("Priority", "4");
+    } else if (status == "low") {
+      http.addHeader("Title", "❄️ Low Temperature Warning");
+      http.addHeader("Priority", "4");
+    } else {
+      http.addHeader("Title", "Temperature Notification");
+      http.addHeader("Priority", "2");
+    }
+
+    int httpResponseCode = http.POST(message);
+
+    if (httpResponseCode > 0) {
+      Serial.printf("✅ Temperature notification sent! Response code: %d\n", httpResponseCode);
+    } else {
+      Serial.printf("❌ Failed to send temperature notification. Error code: %d\n", httpResponseCode);
+    }
+
+    http.end();
+  } else {
+    Serial.println("⚠️ WiFi not connected - Cannot send temperature notification");
+  }
+}
+
+
+
+
 
 // WEBSOCKET FUNCTIONS
 void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
@@ -367,6 +414,31 @@ void loop() {
       }
     }
   }
+
+
+
+  // DETECTING Temperature
+  float temperature = bmp.readTemperature();
+
+if (temperature >= 50.0) {
+  String message = "🔥 CRITICAL Temperature Alert! Value: " + String(temperature) + " °C";
+  sendTemperatureNotification(message, "critical");
+
+  // Optional: trigger buzzer or LED
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(200);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(150);
+  }
+} else if (temperature >= 40.0) {
+  String message = "🌡️ High Temperature Detected: " + String(temperature) + " °C";
+  sendTemperatureNotification(message, "warning");
+}
+
+
+
+
 
   // READ SENSOR DATA AT INTERVAL
   if (millis() - lastSensorRead >= SENSOR_INTERVAL) {
