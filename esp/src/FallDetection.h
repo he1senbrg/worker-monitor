@@ -18,7 +18,7 @@ private:
   unsigned long impactTime;
   const float FREE_FALL_THRESHOLD = 0.5;
   const float IMPACT_THRESHOLD = 2.0;
-  const unsigned long STABILITY_DURATION = 3000; // ms
+  const unsigned long STABILITY_DURATION = 3000;
   const float GYRO_THRESHOLD = 1.0;
   const float ACC_MIN = 0.9;
   const float ACC_MAX = 1.1;
