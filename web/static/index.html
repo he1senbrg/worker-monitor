@@ -1,9 +1,10 @@
 <!DOCTYPE HTML>
 <html>
   <head>
-    <title>Health Monitor</title>
+    <title>Worker Monitor</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" href="data:,">
+    <link rel="icon" href="static/favicon.png">
     <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.15.4/css/all.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -53,7 +54,7 @@
               <div class="card-icon imu-icon">
                 <i class="fas fa-compass"></i>
               </div>
-              <div class="card-title">IMU Sensor (MPU6500)</div>
+              <div class="card-title">MPU6500</div>
             </div>
             <div class="card-body">
               <div class="sensor-section">
@@ -88,7 +89,7 @@
             </div>
             <div class="card-body">
               <div class="sensor-section">
-                <div class="section-title">BMP280 (Pressure)</div>
+                <div class="section-title">BMP280</div>
                 <div class="sensor-readings">
                   <div class="reading-item">
                     <div class="reading-label">Temperature</div>
@@ -105,17 +106,17 @@
                 </div>
               </div>
               <div class="sensor-section">
-                <div class="section-title">DHT22 (Humidity)</div>
+                <div class="section-title">DHT22</div>
                 <div class="sensor-readings">
                   <div class="reading-item">
                     <div class="reading-label">Temperature</div>
                     <div class="reading-value"><span id="dhtTemp">0.0</span><span class="reading-unit">°C</span></div>
                   </div>
-                  <div class="reading-item">
+                  <div class="reading-item" style="visibility: hidden;">
                     <div class="reading-label">Humidity</div>
                     <div class="reading-value"><span id="humidity">0.0</span><span class="reading-unit">%</span></div>
                   </div>
-                  <div class="reading-item">
+                  <div class="reading-item" style="visibility: hidden;">
                     <div class="reading-label">Heat Index</div>
                     <div class="reading-value"><span id="heatIndex">N/A</span><span class="reading-unit">°C</span></div>
                   </div>
@@ -142,7 +143,7 @@
                   <span id="heartRate">--</span> BPM
                 </div>
                 <div style="font-size: 1rem; color: #7d8590; margin-bottom: 1rem; font-weight: 500;">
-                  Average: <span id="avgHeartRate" style="color: #e6edf3;">--</span> BPM
+                  Instantaneous: <span id="avgHeartRate" style="color: #e6edf3;">--</span> BPM
                 </div>
                 <div class="heart-status" id="heartStatus">
                   Place sensor

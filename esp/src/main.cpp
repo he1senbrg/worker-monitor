@@ -17,121 +17,74 @@
 
 #define BUZZER_PIN 14
 
-// Rock Fall detection in Caves
 RockfallDetector rockfall;
 unsigned long lastRockfallCheck = 0;
 const unsigned long ROCKFALL_CHECK_INTERVAL = 1000;
 
-// Fall detection
 FallDetector detector;
 
-// WIFI CREDENTIALS
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
 
-// WEBSOCKET SERVER CONFIG
 const char *websocket_server = SERVER_IP;
 const int websocket_port = SERVER_PORT;
 const char *websocket_path = "/";
 
-// Create WebSocket client
 WebSocketsClient webSocket;
 
-// Json Variable to Hold Sensor Readings
 JSONVar readings;
 
-// MPU6500 setup
 #define MPU6500_ADDR 0x68
 MPU6500_WE myMPU6500 = MPU6500_WE(MPU6500_ADDR);
 
-// BMP280 setup
-Adafruit_BMP280 bmp; // I2C
+Adafruit_BMP280 bmp;
 
-// MAX30105 setup
 MAX30105 particleSensor;
 
-// Increase this for more averaging. 4 is good.
-const byte RATE_SIZE = 4;
-
-// Array of heart rates
-byte rates[RATE_SIZE];
-byte rateSpot = 0;
-
-// Time at which the last beat occurred
-long lastBeat = 0;
-
+unsigned long lastBeat = 0;
 float beatsPerMinute = 0;
-int beatAvg = 0;
+int beatAvg = 70;
+const byte RATE_ARRAY_SIZE = 4;
+long rateArray[RATE_ARRAY_SIZE] = {0};
+long rateArrayIndex = 0;
+bool fingerDetected = false;
 
-// DHT22 setup
+
 #define DHTPIN 16
 #define DHTTYPE DHT22
 DHT_Unified dht(DHTPIN, DHTTYPE);
 
-// TIMING VARIABLES
+
 unsigned long lastSensorRead = 0;
-const unsigned long SENSOR_INTERVAL = 10; // Send data every 10ms
+const unsigned long SENSOR_INTERVAL = 10;
 
-const char *ntfy_topic_url = "https://ntfy.vishnu.studio/wuhahaha";
+const char *ntfy_topic_url = "https://ntfy.vishnu.studio/sector";
 
-void sendFallNotification(String message) {
-  if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http;
-    http.begin(ntfy_topic_url); // ntfy topic endpoint
-    http.addHeader("Content-Type", "text/plain");
-    http.addHeader("Title", "Fall Alert");
-    http.addHeader("Priority", "3"); // 1=low, 5=max
-
-    int httpResponseCode = http.POST(message);
-
-    if (httpResponseCode > 0) {
-      Serial.printf("✅ Notification sent! Response code: %d\n",
-                    httpResponseCode);
-    } else {
-      Serial.printf("❌ Failed to send notification. Error code: %d\n",
-                    httpResponseCode);
-    }
-
-    http.end();
-  } else {
-    Serial.println("⚠️  WiFi not connected - Cannot send notification");
-  }
-}
-
-void sendRockfallNotification(String message, String status = "warning") {
+void sendNotification(String id, String name, String event, String message) {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
     http.begin(ntfy_topic_url);
     http.addHeader("Content-Type", "text/plain");
+    http.addHeader("Title", event);
+    http.addHeader("Priority", "3");
 
-    if (status == "warning") {
-      http.addHeader("Title", "⚠️ Rockfall Warning");
-      http.addHeader("Priority", "2");
-    } else if (status == "detected") {
-      http.addHeader("Title", "🚨 Rockfall Detected!");
-      http.addHeader("Priority", "4");
-    } else {
-      http.addHeader("Title", "Rockfall Alert");
-      http.addHeader("Priority", "3");
-    }
+    const String payload = "[" + id + "] " + name + ": " + message;
 
-    int httpResponseCode = http.POST(message);
+    int httpResponseCode = http.POST(payload);
 
     if (httpResponseCode > 0) {
-      Serial.printf("✅ Rockfall notification sent! Response code: %d\n",
-                    httpResponseCode);
+      Serial.printf("Notification sent! Response code: %d\n", httpResponseCode);
     } else {
-      Serial.printf("❌ Failed to send rockfall notification. Error code: %d\n",
-                    httpResponseCode);
+      Serial.printf("Failed to send notification. Error code: %d\n", httpResponseCode);
     }
 
     http.end();
   } else {
-    Serial.println("⚠️ WiFi not connected - Cannot send rockfall notification");
+    Serial.println("WiFi not connected - Cannot send notification");
   }
 }
 
-// WEBSOCKET FUNCTIONS
+
 void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
   switch (type) {
   case WStype_DISCONNECTED:
@@ -155,7 +108,7 @@ void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
   }
 }
 
-// Initialize WiFi
+
 void initWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
@@ -167,6 +120,33 @@ void initWiFi() {
   Serial.println();
   Serial.print("WiFi connected! IP address: ");
   Serial.println(WiFi.localIP());
+}
+
+
+void calculateHeartRate(long irValue) {
+  if (checkForBeat(irValue)) {
+    unsigned long currentTime = millis();
+    long delta = currentTime - lastBeat;
+    lastBeat = currentTime;
+
+    
+    if (delta > 300 && delta < 2000) {
+      beatsPerMinute = 60000.0 / delta; 
+
+      
+      rateArray[rateArrayIndex++] = (long)beatsPerMinute;
+      rateArrayIndex %= RATE_ARRAY_SIZE;
+
+      
+      long total = 0;
+      for (byte i = 0; i < RATE_ARRAY_SIZE; i++) {
+        total += rateArray[i];
+      }
+      beatAvg = total / RATE_ARRAY_SIZE;
+
+      beatAvg = constrain(beatAvg, 40, 200);
+    }
+  }
 }
 
 String getAllSensorReadings() {
@@ -244,7 +224,9 @@ String getAllSensorReadings() {
   long irValue = particleSensor.getIR();
   readings["irValue"] = String(irValue);
 
-  if (irValue >= 30000) {
+  fingerDetected = (irValue > 7000);
+
+  if (fingerDetected) {
     readings["heartRate"] = String(beatsPerMinute, 1);
     readings["avgHeartRate"] = String(beatAvg);
     readings["fingerDetected"] = "true";
@@ -291,9 +273,11 @@ void setup() {
     Serial.println("FAILED");
   } else {
     Serial.println("OK");
-    bmp.setSampling(Adafruit_BMP280::MODE_FORCED, Adafruit_BMP280::SAMPLING_X2,
-                    Adafruit_BMP280::SAMPLING_X16, Adafruit_BMP280::FILTER_X16,
-                    Adafruit_BMP280::STANDBY_MS_500);
+    bmp.setSampling(
+      Adafruit_BMP280::MODE_FORCED, Adafruit_BMP280::SAMPLING_X2,
+      Adafruit_BMP280::SAMPLING_X16, Adafruit_BMP280::FILTER_X16,
+      Adafruit_BMP280::STANDBY_MS_500
+    );
   }
 
   Serial.print("MAX30105 (Heart Rate)...");
@@ -302,9 +286,9 @@ void setup() {
   } else {
     Serial.println("OK");
     particleSensor.setup();
-    // particleSensor.setPulseAmplitudeRed(10);
-    // particleSensor.setPulseAmplitudeIR(10);
-    // particleSensor.setPulseAmplitudeGreen(50);
+    particleSensor.setPulseAmplitudeRed(0x50);
+    particleSensor.setPulseAmplitudeIR(0x50);
+    particleSensor.setLEDMode(2);
   }
 
   Serial.print("DHT22 (Temp/Humidity)...");
@@ -319,6 +303,10 @@ void setup() {
 
   Serial.println("ALL SENSORS INITIALIZED!");
 
+  for (int i = 0; i < RATE_ARRAY_SIZE; i++) {
+    rateArray[i] = 70;
+  }
+
   delay(500);
 }
 
@@ -327,24 +315,17 @@ void loop() {
 
   long irValue = particleSensor.getIR();
 
-  // HEART RATE DETECTION
-  if (checkForBeat(irValue) == true) {
-    long delta = millis() - lastBeat;
-    lastBeat = millis();
+  fingerDetected = (irValue > 7000);
 
-    beatsPerMinute = 60 / (delta / 1000.0);
-
-    if (beatsPerMinute < 255 && beatsPerMinute > 20) {
-      rates[rateSpot++] = (byte)beatsPerMinute;
-      rateSpot %= RATE_SIZE;
-
-      long total = 0;
-      for (byte x = 0; x < RATE_SIZE; x++)
-        total += rates[x];
-      beatAvg = total / RATE_SIZE;
+  if (fingerDetected) {
+    calculateHeartRate(irValue);
+  } else {
+    for (int i = 0; i < RATE_ARRAY_SIZE; i++) {
+      rateArray[i] = 70;
     }
+    beatsPerMinute = 0;
   }
-  // Dectecting Rock Fall!
+
   if (millis() - lastRockfallCheck >= ROCKFALL_CHECK_INTERVAL) {
     lastRockfallCheck = millis();
     float pressure = bmp.readPressure();
@@ -355,9 +336,8 @@ void loop() {
     rockfall.update(pressure, resultantG, gyro);
 
     if (rockfall.isRockfallDetected()) {
-      Serial.println("⚠️  ROCKFALL DETECTED!");
-
-      sendRockfallNotification("⚠️ ROCKFALL DETECTED in cave!");
+      Serial.println("ROCKFALL DETECTED!");
+      sendNotification(WORKER_ID, WORKER_NAME, "ROCKFALL DETECTED", "Rockfall detected in cave!");
 
       for (int i = 0; i < 3; i++) {
         digitalWrite(BUZZER_PIN, HIGH);
@@ -368,27 +348,21 @@ void loop() {
     }
   }
 
-  // READ SENSOR DATA AT INTERVAL
   if (millis() - lastSensorRead >= SENSOR_INTERVAL) {
     lastSensorRead = millis();
 
-    // Get accelerometer and gyroscope data
     xyzFloat acc = myMPU6500.getGValues();
     xyzFloat gyro = myMPU6500.getGyrValues();
     float resultantG = sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
 
-    // Update fall detection logic
     detector.update(resultantG, gyro, beatAvg);
 
-    // Trigger detection alerts
     if (detector.isFallDetected()) {
-      Serial.println("⚠️  FALL DETECTED!");
+      Serial.println("FALL DETECTED!");
       if (detector.isHeartRateCritical()) {
-        Serial.println("❗ CRITICAL: Abnormal heart rate after fall!");
-        sendFallNotification("❗ FALL DETECTED with CRITICAL heart rate!");
+        sendNotification(WORKER_ID, WORKER_NAME, "FALL DETECTED", "FALL detected, Heart Rate CRITICAL");
       } else {
-        Serial.println("ℹ️  Heart rate is stable after fall.");
-        sendFallNotification("⚠️ FALL DETECTED but heart rate stable.");
+        sendNotification(WORKER_ID, WORKER_NAME, "FALL DETECTED", "FALL detected, Heart Rate stable.");
       }
 
       for (int i = 0; i < 3; i++) {
@@ -399,7 +373,6 @@ void loop() {
       }
     }
 
-    // Send all sensor data including heart rate + movement via WebSocket
     String sensorData = getAllSensorReadings();
     webSocket.sendTXT(sensorData);
 
