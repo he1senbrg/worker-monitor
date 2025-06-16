@@ -1,4 +1,6 @@
+#include "FallDetection.h"
 #include "MAX30105.h"
+#include "RockFall.h"
 #include "heartRate.h"
 #include "secrets.h"
 #include <Adafruit_BMP280.h>
@@ -7,18 +9,21 @@
 #include <Arduino_JSON.h>
 #include <DHT.h>
 #include <DHT_U.h>
+#include <HTTPClient.h>
 #include <MPU6500_WE.h>
 #include <WebSocketsClient.h>
 #include <WiFi.h>
 #include <Wire.h>
-#include "FallDetection.h"
-#include <HTTPClient.h>
 
 #define BUZZER_PIN 14
 
+// Rock Fall detection in Caves
+RockfallDetector rockfall;
+unsigned long lastRockfallCheck = 0;
+const unsigned long ROCKFALL_CHECK_INTERVAL = 1000;
+
 // Fall detection
 FallDetector detector;
-
 
 // WIFI CREDENTIALS
 const char *ssid = WIFI_SSID;
@@ -67,7 +72,7 @@ DHT_Unified dht(DHTPIN, DHTTYPE);
 unsigned long lastSensorRead = 0;
 const unsigned long SENSOR_INTERVAL = 10; // Send data every 10ms
 
-const char* ntfy_topic_url = "https://ntfy.vishnu.studio/wuhahaha";
+const char *ntfy_topic_url = "https://ntfy.vishnu.studio/wuhahaha";
 
 void sendFallNotification(String message) {
   if (WiFi.status() == WL_CONNECTED) {
@@ -80,9 +85,11 @@ void sendFallNotification(String message) {
     int httpResponseCode = http.POST(message);
 
     if (httpResponseCode > 0) {
-      Serial.printf("✅ Notification sent! Response code: %d\n", httpResponseCode);
+      Serial.printf("✅ Notification sent! Response code: %d\n",
+                    httpResponseCode);
     } else {
-      Serial.printf("❌ Failed to send notification. Error code: %d\n", httpResponseCode);
+      Serial.printf("❌ Failed to send notification. Error code: %d\n",
+                    httpResponseCode);
     }
 
     http.end();
@@ -91,6 +98,38 @@ void sendFallNotification(String message) {
   }
 }
 
+void sendRockfallNotification(String message, String status = "warning") {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(ntfy_topic_url);
+    http.addHeader("Content-Type", "text/plain");
+
+    if (status == "warning") {
+      http.addHeader("Title", "⚠️ Rockfall Warning");
+      http.addHeader("Priority", "2");
+    } else if (status == "detected") {
+      http.addHeader("Title", "🚨 Rockfall Detected!");
+      http.addHeader("Priority", "4");
+    } else {
+      http.addHeader("Title", "Rockfall Alert");
+      http.addHeader("Priority", "3");
+    }
+
+    int httpResponseCode = http.POST(message);
+
+    if (httpResponseCode > 0) {
+      Serial.printf("✅ Rockfall notification sent! Response code: %d\n",
+                    httpResponseCode);
+    } else {
+      Serial.printf("❌ Failed to send rockfall notification. Error code: %d\n",
+                    httpResponseCode);
+    }
+
+    http.end();
+  } else {
+    Serial.println("⚠️ WiFi not connected - Cannot send rockfall notification");
+  }
+}
 
 // WEBSOCKET FUNCTIONS
 void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
@@ -305,6 +344,29 @@ void loop() {
       beatAvg = total / RATE_SIZE;
     }
   }
+  // Dectecting Rock Fall!
+  if (millis() - lastRockfallCheck >= ROCKFALL_CHECK_INTERVAL) {
+    lastRockfallCheck = millis();
+    float pressure = bmp.readPressure();
+    xyzFloat acc = myMPU6500.getGValues();
+    xyzFloat gyro = myMPU6500.getGyrValues();
+    float resultantG = sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+
+    rockfall.update(pressure, resultantG, gyro);
+
+    if (rockfall.isRockfallDetected()) {
+      Serial.println("⚠️  ROCKFALL DETECTED!");
+
+      sendRockfallNotification("⚠️ ROCKFALL DETECTED in cave!");
+
+      for (int i = 0; i < 3; i++) {
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(200);
+        digitalWrite(BUZZER_PIN, LOW);
+        delay(150);
+      }
+    }
+  }
 
   // READ SENSOR DATA AT INTERVAL
   if (millis() - lastSensorRead >= SENSOR_INTERVAL) {
@@ -320,24 +382,22 @@ void loop() {
 
     // Trigger detection alerts
     if (detector.isFallDetected()) {
-    Serial.println("⚠️  FALL DETECTED!");
-    if (detector.isHeartRateCritical()) {
-      Serial.println("❗ CRITICAL: Abnormal heart rate after fall!");
-      sendFallNotification("❗ FALL DETECTED with CRITICAL heart rate!");
-    } else {
-      Serial.println("ℹ️  Heart rate is stable after fall.");
-      sendFallNotification("⚠️ FALL DETECTED but heart rate stable.");
+      Serial.println("⚠️  FALL DETECTED!");
+      if (detector.isHeartRateCritical()) {
+        Serial.println("❗ CRITICAL: Abnormal heart rate after fall!");
+        sendFallNotification("❗ FALL DETECTED with CRITICAL heart rate!");
+      } else {
+        Serial.println("ℹ️  Heart rate is stable after fall.");
+        sendFallNotification("⚠️ FALL DETECTED but heart rate stable.");
+      }
+
+      for (int i = 0; i < 3; i++) {
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(300);
+        digitalWrite(BUZZER_PIN, LOW);
+        delay(200);
+      }
     }
-
-    for (int i = 0; i < 3; i++) {
-      digitalWrite(BUZZER_PIN, HIGH);
-      delay(300);
-      digitalWrite(BUZZER_PIN, LOW);
-      delay(200);
-    }
-
-  }
-
 
     // Send all sensor data including heart rate + movement via WebSocket
     String sensorData = getAllSensorReadings();
