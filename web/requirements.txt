@@ -1,8 +1,0 @@
-websockets
-asyncio-mqtt
-numpy
-pandas
-matplotlib
-aiohttp
-ahrs
-black
