@@ -1,0 +1,711 @@
+<!DOCTYPE html>  
+<html lang="en">  
+<head>  
+    <meta charset="UTF-8">  
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">  
+    <title>Worker Monitor - ESP32 Sensor System</title>  
+    <meta name="description" content="An ESP32-based worker condition monitoring system that collects biometric and environmental data through multiple sensors for worker safety applications.">  
+      
+    <!-- Favicon -->  
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛏️</text></svg>">  
+      
+    <!-- Fonts -->  
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">  
+      
+    <!-- Font Awesome -->  
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">  
+      
+    <style>  
+        :root {  
+            --primary-color: #3b82f6;  
+            --primary-dark: #1d4ed8;  
+            --secondary-color: #10b981;  
+            --accent-color: #f59e0b;  
+            --danger-color: #ef4444;  
+            --dark-bg: #0f172a;  
+            --dark-card: #1e293b;  
+            --dark-border: #334155;  
+            --text-primary: #f8fafc;  
+            --text-secondary: #cbd5e1;  
+            --text-muted: #64748b;  
+            --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);  
+            --gradient-secondary: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);  
+            --gradient-accent: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);  
+        }  
+  
+        * {  
+            margin: 0;  
+            padding: 0;  
+            box-sizing: border-box;  
+        }  
+  
+        body {  
+            font-family: 'Inter', sans-serif;  
+            background: var(--dark-bg);  
+            color: var(--text-primary);  
+            line-height: 1.6;  
+            overflow-x: hidden;  
+        }  
+  
+        .container {  
+            max-width: 1200px;  
+            margin: 0 auto;  
+            padding: 0 20px;  
+        }  
+  
+        /* Header */  
+        .header {  
+            background: rgba(15, 23, 42, 0.95);  
+            backdrop-filter: blur(20px);  
+            border-bottom: 1px solid var(--dark-border);  
+            position: fixed;  
+            top: 0;  
+            left: 0;  
+            right: 0;  
+            z-index: 1000;  
+            transition: all 0.3s ease;  
+        }  
+  
+        .nav {  
+            display: flex;  
+            justify-content: space-between;  
+            align-items: center;  
+            padding: 1rem 0;  
+        }  
+  
+        .logo {  
+            display: flex;  
+            align-items: center;  
+            gap: 0.5rem;  
+            font-size: 1.5rem;  
+            font-weight: 700;  
+            color: var(--text-primary);  
+            text-decoration: none;  
+        }  
+  
+        .nav-links {  
+            display: flex;  
+            gap: 2rem;  
+            list-style: none;  
+        }  
+  
+        .nav-links a {  
+            color: var(--text-secondary);  
+            text-decoration: none;  
+            font-weight: 500;  
+            transition: color 0.3s ease;  
+        }  
+  
+        .nav-links a:hover {  
+            color: var(--primary-color);  
+        }  
+  
+        /* Hero Section */  
+        .hero {  
+            padding: 8rem 0 4rem;  
+            text-align: center;  
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);  
+            position: relative;  
+            overflow: hidden;  
+        }  
+  
+        .hero::before {  
+            content: '';  
+            position: absolute;  
+            top: 0;  
+            left: 0;  
+            right: 0;  
+            bottom: 0;  
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/></pattern></defs><rect width="100" height="100" fill="url(%23grid)"/></svg>') repeat;  
+            opacity: 0.5;  
+        }  
+  
+        .hero-content {  
+            position: relative;  
+            z-index: 1;  
+        }  
+  
+        .hero h1 {  
+            font-size: 3.5rem;  
+            font-weight: 700;  
+            margin-bottom: 1rem;  
+            background: var(--gradient-primary);  
+            -webkit-background-clip: text;  
+            -webkit-text-fill-color: transparent;  
+            background-clip: text;  
+        }  
+  
+        .hero p {  
+            font-size: 1.25rem;  
+            color: var(--text-secondary);  
+            margin-bottom: 2rem;  
+            max-width: 600px;  
+            margin-left: auto;  
+            margin-right: auto;  
+        }  
+  
+        .cta-buttons {  
+            display: flex;  
+            gap: 1rem;  
+            justify-content: center;  
+            flex-wrap: wrap;  
+        }  
+  
+        .btn {  
+            padding: 0.875rem 2rem;  
+            border: none;  
+            border-radius: 0.5rem;  
+            font-weight: 600;  
+            text-decoration: none;  
+            display: inline-flex;  
+            align-items: center;  
+            gap: 0.5rem;  
+            transition: all 0.3s ease;  
+            cursor: pointer;  
+        }  
+  
+        .btn-primary {  
+            background: var(--gradient-primary);  
+            color: white;  
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);  
+        }  
+  
+        .btn-primary:hover {  
+            transform: translateY(-2px);  
+            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.6);  
+        }  
+  
+        .btn-secondary {  
+            background: transparent;  
+            color: var(--text-primary);  
+            border: 2px solid var(--dark-border);  
+        }  
+  
+        .btn-secondary:hover {  
+            border-color: var(--primary-color);  
+            background: rgba(59, 130, 246, 0.1);  
+        }  
+  
+        /* Features Section */  
+        .features {  
+            padding: 4rem 0;  
+        }  
+  
+        .section-title {  
+            text-align: center;  
+            margin-bottom: 3rem;  
+        }  
+  
+        .section-title h2 {  
+            font-size: 2.5rem;  
+            font-weight: 700;  
+            margin-bottom: 1rem;  
+        }  
+  
+        .section-title p {  
+            font-size: 1.125rem;  
+            color: var(--text-secondary);  
+            max-width: 600px;  
+            margin: 0 auto;  
+        }  
+  
+        .features-grid {  
+            display: grid;  
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));  
+            gap: 2rem;  
+            margin-top: 3rem;  
+        }  
+  
+        .feature-card {  
+            background: var(--dark-card);  
+            border: 1px solid var(--dark-border);  
+            border-radius: 1rem;  
+            padding: 2rem;  
+            transition: all 0.3s ease;  
+            position: relative;  
+            overflow: hidden;  
+        }  
+  
+        .feature-card::before {  
+            content: '';  
+            position: absolute;  
+            top: 0;  
+            left: 0;  
+            right: 0;  
+            height: 4px;  
+            background: var(--gradient-primary);  
+        }  
+  
+        .feature-card:hover {  
+            transform: translateY(-5px);  
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);  
+        }  
+  
+        .feature-icon {  
+            width: 60px;  
+            height: 60px;  
+            border-radius: 1rem;  
+            display: flex;  
+            align-items: center;  
+            justify-content: center;  
+            font-size: 1.5rem;  
+            color: white;  
+            margin-bottom: 1rem;  
+        }  
+  
+        .feature-icon.motion { background: var(--gradient-primary); }  
+        .feature-icon.env { background: var(--gradient-secondary); }  
+        .feature-icon.bio { background: var(--gradient-accent); }  
+        .feature-icon.web { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }  
+  
+        .feature-card h3 {  
+            font-size: 1.25rem;  
+            font-weight: 600;  
+            margin-bottom: 0.5rem;  
+        }  
+  
+        .feature-card p {  
+            color: var(--text-secondary);  
+            margin-bottom: 1rem;  
+        }  
+  
+        .feature-list {  
+            list-style: none;  
+        }  
+  
+        .feature-list li {  
+            color: var(--text-muted);  
+            font-size: 0.875rem;  
+            margin-bottom: 0.25rem;  
+            display: flex;  
+            align-items: center;  
+            gap: 0.5rem;  
+        }  
+  
+        .feature-list li::before {  
+            content: '✓';  
+            color: var(--secondary-color);  
+            font-weight: bold;  
+        }  
+  
+        /* Tech Stack */  
+        .tech-stack {  
+            padding: 4rem 0;  
+            background: rgba(30, 41, 59, 0.3);  
+        }  
+  
+        .tech-grid {  
+            display: grid;  
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));  
+            gap: 1.5rem;  
+            margin-top: 2rem;  
+        }  
+  
+        .tech-item {  
+            background: var(--dark-card);  
+            border: 1px solid var(--dark-border);  
+            border-radius: 0.5rem;  
+            padding: 1.5rem;  
+            text-align: center;  
+            transition: all 0.3s ease;  
+        }  
+  
+        .tech-item:hover {  
+            border-color: var(--primary-color);  
+            transform: translateY(-2px);  
+        }  
+  
+        .tech-item i {  
+            font-size: 2rem;  
+            color: var(--primary-color);  
+            margin-bottom: 1rem;  
+        }  
+  
+        /* Getting Started */  
+        .getting-started {  
+            padding: 4rem 0;  
+        }  
+  
+        .steps {  
+            display: grid;  
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));  
+            gap: 2rem;  
+            margin-top: 3rem;  
+        }  
+  
+        .step {  
+            background: var(--dark-card);  
+            border: 1px solid var(--dark-border);  
+            border-radius: 1rem;  
+            padding: 2rem;  
+            position: relative;  
+        }  
+  
+        .step-number {  
+            position: absolute;  
+            top: -15px;  
+            left: 2rem;  
+            background: var(--gradient-primary);  
+            color: white;  
+            width: 30px;  
+            height: 30px;  
+            border-radius: 50%;  
+            display: flex;  
+            align-items: center;  
+            justify-content: center;  
+            font-weight: bold;  
+            font-size: 0.875rem;  
+        }  
+  
+        .step h3 {  
+            margin-bottom: 1rem;  
+            padding-top: 0.5rem;  
+        }  
+  
+        .step p {  
+            color: var(--text-secondary);  
+        }  
+  
+        /* Code Block */  
+        .code-block {  
+            background: #1a1a1a;  
+            border: 1px solid var(--dark-border);  
+            border-radius: 0.5rem;  
+            padding: 1rem;  
+            margin: 1rem 0;  
+            overflow-x: auto;  
+        }  
+  
+        .code-block code {  
+            color: #50fa7b;  
+            font-family: 'Courier New', monospace;  
+            font-size: 0.875rem;  
+        }  
+  
+        /* Footer */  
+        .footer {  
+            background: var(--dark-card);  
+            border-top: 1px solid var(--dark-border);  
+            padding: 3rem 0;  
+            text-align: center;  
+        }  
+  
+        .footer-content {  
+            display: flex;  
+            justify-content: space-between;  
+            align-items: center;  
+            flex-wrap: wrap;  
+            gap: 2rem;  
+        }  
+  
+        .footer-links {  
+            display: flex;  
+            gap: 2rem;  
+        }  
+  
+        .footer-links a {  
+            color: var(--text-secondary);  
+            text-decoration: none;  
+            transition: color 0.3s ease;  
+        }  
+  
+        .footer-links a:hover {  
+            color: var(--primary-color);  
+        }  
+  
+        /* Responsive */  
+        @media (max-width: 768px) {  
+            .hero h1 {  
+                font-size: 2.5rem;  
+            }  
+              
+            .nav-links {  
+                display: none;  
+            }  
+              
+            .cta-buttons {  
+                flex-direction: column;  
+                align-items: center;  
+            }  
+              
+            .footer-content {  
+                flex-direction: column;  
+                text-align: center;  
+            }  
+        }  
+  
+        /* Animations */  
+        @keyframes fadeInUp {  
+            from {  
+                opacity: 0;  
+                transform: translateY(30px);  
+            }  
+            to {  
+                opacity: 1;  
+                transform: translateY(0);  
+            }  
+        }  
+  
+        .animate-fade-in {  
+            animation: fadeInUp 0.6s ease-out;  
+        }  
+  
+        /* Scroll animations */  
+        .scroll-animate {  
+            opacity: 0;  
+            transform: translateY(30px);  
+            transition: all 0.6s ease-out;  
+        }  
+  
+        .scroll-animate.animate {  
+            opacity: 1;  
+            transform: translateY(0);  
+        }  
+    </style>  
+</head>  
+<body>  
+    <!-- Header -->  
+    <header class="header">  
+        <nav class="nav container">  
+            <a href="#" class="logo">  
+                <i class="fas fa-hard-hat"></i>  
+                Worker Monitor  
+            </a>  
+            <ul class="nav-links">  
+                <li><a href="#features">Features</a></li>  
+                <li><a href="#tech">Technology</a></li>  
+                <li><a href="#setup">Setup</a></li>  
+                <li><a href="https://github.com/he1senbrg/worker-monitor">GitHub</a></li>  
+            </ul>  
+        </nav>  
+    </header>  
+  
+    <!-- Hero Section -->  
+    <section class="hero">  
+        <div class="container">  
+            <div class="hero-content animate-fade-in">  
+                <h1>Worker Monitor</h1>  
+                <p>An advanced ESP32-based worker condition monitoring system that collects biometric and environmental data through multiple sensors to ensure worker safety in real-time.</p>  
+                <div class="cta-buttons">  
+                    <a href="https://github.com/he1senbrg/worker-monitor" class="btn btn-primary">  
+                        <i class="fab fa-github"></i>  
+                        View on GitHub  
+                    </a>  
+                    <a href="#setup" class="btn btn-secondary">  
+                        <i class="fas fa-rocket"></i>  
+                        Get Started  
+                    </a>  
+                </div>  
+            </div>  
+        </div>  
+    </section>  
+  
+    <!-- Features Section -->  
+    <section class="features" id="features">  
+        <div class="container">  
+            <div class="section-title scroll-animate">  
+                <h2>Comprehensive Monitoring System</h2>  
+                <p>Real-time data collection from multiple sensor types for complete worker safety oversight</p>  
+            </div>  
+              
+            <div class="features-grid">  
+                <div class="feature-card scroll-animate">  
+                    <div class="feature-icon motion">  
+                        <i class="fas fa-compass"></i>  
+                    </div>  
+                    <h3>Motion Sensing</h3>  
+                    <p>Advanced 9-axis motion detection with fall detection capabilities</p>  
+                    <ul class="feature-list">  
+                        <li>MPU6500 accelerometer, gyroscope & magnetometer</li>  
+                        <li>Real-time orientation tracking</li>  
+                        <li>Fall detection algorithms</li>  
+                        <li>Rockfall detection system</li>  
+                    </ul>  
+                </div>  
+  
+                <div class="feature-card scroll-animate">  
+                    <div class="feature-icon env">  
+                        <i class="fas fa-thermometer-half"></i>  
+                    </div>  
+                    <h3>Environmental Monitoring</h3>  
+                    <p>Complete environmental condition tracking for worker safety</p>  
+                    <ul class="feature-list">  
+                        <li>BMP280 pressure & temperature sensor</li>  
+                        <li>DHT22 humidity & temperature sensor</li>  
+                        <li>Altitude calculations</li>  
+                        <li>Heat index monitoring</li>  
+                    </ul>  
+                </div>  
+  
+                <div class="feature-card scroll-animate">  
+                    <div class="feature-icon bio">  
+                        <i class="fas fa-heartbeat"></i>  
+                    </div>  
+                    <h3>Biometric Tracking</h3>  
+                    <p>Real-time health monitoring with advanced pulse oximetry</p>  
+                    <ul class="feature-list">  
+                        <li>MAX30102 pulse oximeter & heart rate sensor</li>  
+                        <li>Real-time heart rate monitoring</li>  
+                        <li>Blood oxygen level detection</li>  
+                        <li>Finger detection algorithms</li>  
+                    </ul>  
+                </div>  
+  
+                <div class="feature-card scroll-animate">  
+                    <div class="feature-icon web">  
+                        <i class="fas fa-wifi"></i>  
+                    </div>  
+                    <h3>Web Dashboard</h3>  
+                    <p>Modern web interface with real-time data visualization</p>  
+                    <ul class="feature-list">  
+                        <li>WebSocket real-time communication</li>  
+                        <li>3D orientation visualization</li>  
+                        <li>SQLite data storage</li>  
+                        <li>Responsive design</li>  
+                    </ul>  
+                </div>  
+            </div>  
+        </div>  
+    </section>  
+  
+    <!-- Tech Stack -->  
+    <section class="tech-stack" id="tech">  
+        <div class="container">  
+            <div class="section-title scroll-animate">  
+                <h2>Technology Stack</h2>  
+                <p>Built with modern technologies and industry-standard components</p>  
+            </div>  
+              
+            <div class="tech-grid">  
+                <div class="tech-item scroll-animate">  
+                    <i class="fab fa-python"></i>  
+                    <h3>Python Backend</h3>  
+                    <p>Asyncio WebSocket server with aiohttp</p>  
+                </div>  
+                <div class="tech-item scroll-animate">  
+                    <i class="fas fa-microchip"></i>  
+                    <h3>ESP32</h3>  
+                    <p>Dual-core microcontroller with WiFi</p>  
+                </div>  
+                <div class="tech-item scroll-animate">  
+                    <i class="fas fa-database"></i>  
+                    <h3>SQLite</h3>  
+                    <p>Lightweight database for sensor data</p>  
+                </div>  
+                <div class="tech-item scroll-animate">  
+                    <i class="fas fa-chart-line"></i>  
+                    <h3>Chart.js</h3>  
+                    <p>Interactive data visualization</p>  
+                </div>  
+                <div class="tech-item scroll-animate">  
+                    <i class="fas fa-cube"></i>  
+                    <h3>Three.js</h3>  
+                    <p>3D orientation visualization</p>  
+                </div>  
+                <div class="tech-item scroll-animate">  
+                    <i class="fas fa-plug"></i>  
+                    <h3>WebSockets</h3>  
+                    <p>Real-time bidirectional communication</p>  
+                </div>  
+            </div>  
+        </div>  
+    </section>  
+  
+    <!-- Getting Started -->  
+    <section class="getting-started" id="setup">  
+        <div class="container">  
+            <div class="section-title scroll-animate">  
+                <h2>Quick Setup Guide</h2>  
+                <p>Get your worker monitoring system up and running in minutes</p>  
+            </div>  
+              
+            <div class="steps">  
+                <div class="step scroll-animate">  
+                    <div class="step-number">1</div>  
+                    <h3>Hardware Setup</h3>  
+                    <p>Connect your sensors to the ESP32 development board:</p>  
+                    <ul class="feature-list">  
+                        <li>MPU6500, BMP280, MAX30102: SDA→GPIO21, SCL→GPIO22</li>  
+                        <li>DHT sensor: Data pin→GPIO16</li>  
+                        <li>Buzzer: VCC→D14</li>  
+                    </ul>  
+                </div>  
+  
+                <div class="step scroll-animate">  
+                    <div class="step-number">2</div>  
+                    <h3>Clone Repository</h3>  
+                    <p>Download the project and install dependencies:</p>  
+                    <div class="code-block">  
+                        <code>git clone https://github.com/he1senbrg/worker-monitor.git</code>  
+                    </div>  
+                </div>  
+  
+                <div class="step scroll-animate">  
+                    <div class="step-number">3</div>  
+                    <h3>Configure & Flash</h3>  
+                    <p>Update WiFi credentials and flash the ESP32 using PlatformIO IDE. Configure server connection settings as needed.</p>  
+                </div>  
+  
+                <div class="step scroll-animate">  
+                    <div class="step-number">4</div>  
+                    <h3>Start Monitoring</h3>  
+                    <p>Run the Python server and access the web dashboard to view real-time sensor data and worker condition monitoring.</p>  
+                </div>  
+            </div>  
+        </div>  
+    </section>  
+  
+    <!-- Footer -->  
+    <footer class="footer">  
+        <div class="container">  
+            <div class="footer-content">  
+                <div class="footer-links">  
+                    <a href="https://github.com/he1senbrg/worker-monitor">Repository</a>  
+                    <a href="https://github.com/he1senbrg/worker-monitor/issues">Issues</a>  
+                    <a href="https://github.com/he1senbrg/worker-monitor/blob/main/README.md">Documentation</a>  
+                </div>
+            </div>  
+        </div>  
+    </footer>  
+  
+    <script>  
+        // Smooth scrolling for navigation links  
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {  
+            anchor.addEventListener('click', function (e) {  
+                e.preventDefault();  
+                document.querySelector(this.getAttribute('href')).scrollIntoView({  
+                    behavior: 'smooth'  
+                });  
+            });  
+        });  
+  
+        // Scroll animations  
+        const observerOptions = {  
+            threshold: 0.1,  
+            rootMargin: '0px 0px -50px 0px'  
+        };  
+  
+        const observer = new IntersectionObserver((entries) => {  
+            entries.forEach(entry => {  
+                if (entry.isIntersecting) {  
+                    entry.target.classList.add('animate');  
+                }  
+            });  
+        }, observerOptions);  
+  
+        document.querySelectorAll('.scroll-animate').forEach(el => {  
+            observer.observe(el);  
+        });  
+  
+        // Header scroll effect  
+        window.addEventListener('scroll', () => {  
+            const header = document.querySelector('.header');  
+            if (window.scrollY > 100) {  
+                header.style.background = 'rgba(15, 23, 42, 0.98)';  
+            } else {  
+                header.style.background = 'rgba(15, 23, 42, 0.95)';  
+            }  
+        });  
+    </script>  
+</body>  
+</html>
