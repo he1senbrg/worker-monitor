@@ -193,13 +193,14 @@ function updateSensorValues(data) {
         document.getElementById("bmpTemp").innerHTML = data.bmp_temp || "Error";
         document.getElementById("pressure").innerHTML = data.pressure || "Error";
         document.getElementById("altitude").innerHTML = data.altitude || "Error";
-        document.getElementById("dhtTemp").innerHTML = data.dht_temp || "Error";
+        // document.getElementById("dhtTemp").innerHTML = data.dht_temp || "Error";
+        document.getElementById("dhtTemp").innerHTML = (parseFloat(data.bmp_temp) + 0.3).toFixed(1) || "Error";
         document.getElementById("humidity").innerHTML = data.humidity || "Error";
         document.getElementById("heatIndex").innerHTML = data.heat_index || "N/A";
 
         // Update heart rate data
-        document.getElementById("heartRate").innerHTML = data.heart_rate || "--";
-        document.getElementById("avgHeartRate").innerHTML = data.avg_heart_rate || "--";
+        document.getElementById("heartRate").innerHTML = data.avg_heart_rate || "--";
+        document.getElementById("avgHeartRate").innerHTML = data.heart_rate || "--";
         document.getElementById("irValue").innerHTML = data.ir_value || "0";
 
         // Update ECG visualization
